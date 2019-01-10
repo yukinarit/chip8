@@ -1,0 +1,6 @@
+[workspace]
+members = [
+	"core",
+	"c8db",
+	"chip8",
+]

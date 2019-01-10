@@ -1,0 +1,9 @@
+[package]
+name = "core"
+version = "0.1.0"
+authors = ["Yukinari Tani <yukinarit84@gmail.com>"]
+edition = "2018"
+
+[dependencies]
+log = "*"
+rand = "0.6"

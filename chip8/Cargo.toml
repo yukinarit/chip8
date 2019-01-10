@@ -1,0 +1,12 @@
+[package]
+name = "chip8"
+version = "0.1.0"
+authors = ["Yukinari Tani <yukinarit84@gmail.com>"]
+edition = "2018"
+
+[dependencies]
+core = { path = "../core" }
+rustbox = "*"
+env_logger = "*"
+log = "*"
+structopt = "*"
