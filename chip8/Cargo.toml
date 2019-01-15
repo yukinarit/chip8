@@ -6,7 +6,7 @@ edition = "2018"
 
 [dependencies]
 core = { path = "../core" }
-rustbox = "*"
+rustbox = { git = "https://github.com/yukinarit/rustbox.git" }
 env_logger = "*"
 log = "*"
 structopt = "*"
