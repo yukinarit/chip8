@@ -21,7 +21,7 @@ static pixel: u8 = 0x0020;
 static white_space: u8 = 0x0032;
 
 #[derive(Debug, StructOpt)]
-#[structopt(name = "chil8", about = "chil8 program options.")]
+#[structopt(name = "chip8", about = "chip8 program options.")]
 struct Option {
     rom: PathBuf,
 }
@@ -179,6 +179,6 @@ fn run(opts: Option) -> Result<(), ()> {
 
 fn main() -> Result<(), ()> {
     env_logger::init();
-    let opt = Option::from_args();
-    run(opt)
+    let opts = Option::from_args();
+    run(opts)
 }

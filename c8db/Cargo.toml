@@ -5,5 +5,7 @@ authors = ["Yukinari Tani <yukinarit84@gmail.com>"]
 edition = "2018"
 
 [dependencies]
-core = { path = "../core" }
 env_logger = "*"
+structopt = "*"
+log = "*"
+core = { path = "../core" }

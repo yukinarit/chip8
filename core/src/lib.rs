@@ -30,7 +30,7 @@ impl Chip8 {
     }
 
     pub fn run(&mut self) {
-        self.cpu.run()
+        self.cpu.run(&mut self.ram, &mut self.screen)
     }
 }
 
@@ -53,7 +53,7 @@ pub struct Cpu {
     pub pc: u16,
 }
 
-enum Res {
+pub enum Res {
     Next,
     Skip,
     Jump(u16),
@@ -98,13 +98,12 @@ impl Cpu {
         Ok(())
     }
 
-    fn run(&mut self) {
+    pub fn run(&mut self, ram: &mut Ram, io: &mut Option<Box<Screen>>) {
         loop {
-            trace!("v{:?} pc={:x}", self.v, self.pc);
             if self.pc >= 0xFFF || (self.pc + 1) >= 0xFFF {
                 break;
             }
-            match self.cycle() {
+            match self.cycle(ram, io) {
                 Next => {
                     self.pc += 2;
                 }
@@ -118,20 +117,13 @@ impl Cpu {
         }
     }
 
-    fn cycle(&mut self) -> Res {
-        let ram = &mut self.ram;
-        let io = &mut self.io;
+    pub fn cycle(&mut self, ram: &mut Ram, io: &mut Option<Box<Screen>>) -> Res {
         let pc = self.pc as usize;
         let o1: u8 = ram.buf[pc] >> 4;
         let o2: u8 = ram.buf[pc] & 0xf;
         let o3: u8 = ram.buf[pc + 1] >> 4;
         let o4: u8 = ram.buf[pc + 1] & 0xf;
         match (o1, o2, o3, o4) {
-            (0x0, n1, n2, n3) => {
-                let nnn = addr(n1, n2, n3);
-                trace!("SYS {:x}", nnn);
-                Jump(nnn)
-            }
             (0x0, 0x0, 0xE, 0x0) => {
                 trace!("CLS");
                 self.clear(io).unwrap();
@@ -141,6 +133,11 @@ impl Cpu {
                 trace!("RET");
                 self.sp -= 1;
                 Jump(self.stack[self.sp as usize])
+            }
+            (0x0, n1, n2, n3) => {
+                let nnn = addr(n1, n2, n3);
+                trace!("SYS {:x}", nnn);
+                Jump(nnn)
             }
             (0x1, n1, n2, n3) => {
                 let nnn = addr(n1, n2, n3);
@@ -262,7 +259,7 @@ impl Cpu {
             }
             (0xA, n1, n2, n3) => {
                 let i = addr(n1, n2, n3);
-                trace!("LD I, {:x}", i);
+                trace!("LD I, {}", i);
                 self.i = i;
                 Next
             }
@@ -347,6 +344,13 @@ impl Cpu {
                 Next
             }
         }
+    }
+
+    pub fn dump(&self) {
+        println!(
+            "v{:?} i={} stack={:?} sp={} pc={}",
+            self.v, self.i, self.stack, self.sp, self.pc
+        );
     }
 }
 
