@@ -32,6 +32,10 @@ impl Chip8 {
     pub fn run(&mut self) {
         self.cpu.run(&mut self.ram, &mut self.screen)
     }
+
+    pub fn cycle(&mut self) {
+        self.cpu.cycle(&mut self.ram, &mut self.screen)
+    }
 }
 
 pub trait Screen {
@@ -63,6 +67,10 @@ use self::Res::{Jump, Next, Skip};
 
 fn addr(n1: u8, n2: u8, n3: u8) -> u16 {
     ((n1 as u16) << 8) + ((n2 as u16) << 4) + n3 as u16
+}
+
+fn fontaddr(n: u8) -> u16 {
+    n as u16 * 5
 }
 
 fn var(x1: u8, x2: u8) -> u8 {
@@ -103,54 +111,43 @@ impl Cpu {
             if self.pc >= 0xFFF || (self.pc + 1) >= 0xFFF {
                 break;
             }
-            match self.cycle(ram, io) {
-                Next => {
-                    self.pc += 2;
-                }
-                Skip => {
-                    self.pc += 4;
-                }
-                Jump(loc) => {
-                    self.pc = loc;
-                }
-            }
+            self.cycle(ram, io);
         }
     }
 
-    pub fn cycle(&mut self, ram: &mut Ram, io: &mut Option<Box<Screen>>) -> Res {
+    pub fn cycle(&mut self, ram: &mut Ram, io: &mut Option<Box<Screen>>) {
         let pc = self.pc as usize;
         let o1: u8 = ram.buf[pc] >> 4;
         let o2: u8 = ram.buf[pc] & 0xf;
         let o3: u8 = ram.buf[pc + 1] >> 4;
         let o4: u8 = ram.buf[pc + 1] & 0xf;
-        match (o1, o2, o3, o4) {
+        let res = match (o1, o2, o3, o4) {
             (0x0, 0x0, 0xE, 0x0) => {
-                trace!("CLS");
+                trace!("00E0 - CLS");
                 self.clear(io).unwrap();
                 Next
             }
             (0x0, 0x0, 0xE, 0xE) => {
-                trace!("RET");
+                trace!("00EE - RET");
                 self.sp -= 1;
                 Jump(self.stack[self.sp as usize])
             }
             (0x0, n1, n2, n3) => {
                 let nnn = addr(n1, n2, n3);
-                trace!("SYS {:x}", nnn);
+                trace!("0nnn - SYS {}", nnn);
                 Jump(nnn)
             }
             (0x1, n1, n2, n3) => {
                 let nnn = addr(n1, n2, n3);
-                trace!("JP {:x}", nnn);
+                trace!("1nnn - JP {}", nnn);
                 Jump(nnn)
             }
             (0x2, n1, n2, n3) => {
                 let nnn = addr(n1, n2, n3);
-                trace!("CALL {:x}", nnn);
-                //self.sp += 1;
-                //self.stack[self.sp as usize] = self.pc;
-                //self.pc = nnn;
-                Next
+                trace!("2nnn - CALL {}", nnn);
+                self.stack[self.sp as usize] = self.pc;
+                self.sp += 1;
+                Jump(nnn)
             }
             (0x3, x, k1, k2) => {
                 let kk = var(k1, k2);
@@ -180,39 +177,39 @@ impl Cpu {
             }
             (0x6, x, k1, k2) => {
                 let kk = var(k1, k2);
-                trace!("LD V{}={}", x, kk);
+                trace!("6xkk - LD V{}={}", x, kk);
                 self.v[idx(x)] = kk;
                 Next
             }
             (0x7, x, k1, k2) => {
                 let x = idx(x);
                 let kk = var(k1, k2);
-                trace!("ADD V{} {}", x, kk);
+                trace!("7xkk - ADD V{} {}", x, kk);
                 self.v[x] = self.v[x].overflowing_add(kk).0;
                 Next
             }
             (0x8, x, y, 0x0) => {
-                trace!("LD V{} V{}", x, y);
+                trace!("8xy0 - LD V{} V{}", x, y);
                 self.v[idx(x)] = self.v[idx(y)];
                 Next
             }
             (0x8, x, y, 0x1) => {
-                trace!("OR V{} V{}", x, y);
+                trace!("8xy1 - OR V{} V{}", x, y);
                 self.v[idx(x)] |= self.v[idx(y)];
                 Next
             }
             (0x8, x, y, 0x2) => {
-                trace!("AND V{} V{}", x, y);
+                trace!("8xy2 - AND V{} V{}", x, y);
                 self.v[idx(x)] &= self.v[idx(y)];
                 Next
             }
             (0x8, x, y, 0x3) => {
-                trace!("XOR V{} V{}", x, y);
+                trace!("8xy3 - XOR V{} V{}", x, y);
                 self.v[idx(x)] ^= self.v[idx(y)];
                 Next
             }
             (0x8, x, y, 0x4) => {
-                trace!("ADD V{} V{}", x, y);
+                trace!("8xy4 - ADD V{} V{}", x, y);
                 let a = self.v[idx(x)] as u16 + self.v[idx(y)] as u16;
                 if a > 0xff {
                     self.v[0xF - 1] = 1;
@@ -223,20 +220,20 @@ impl Cpu {
                 Next
             }
             (0x8, x, y, 0x5) => {
-                trace!("SUB V{} V{}", x, y);
+                trace!("8xy5 - SUB V{} V{}", x, y);
                 if self.v[idx(x)] > self.v[idx(y)] {
                     self.v[0xF - 1] = 1;
                 }
                 Next
             }
             (0x8, x, y, 0x6) => {
-                trace!("SHR V{} V{}", x, y);
+                trace!("8xy6 - SHR V{} V{}", x, y);
                 self.v[0xF - 1] = self.v[idx(x)] & 0x1;
                 self.v[idx(x)] /= 2;
                 Next
             }
             (0x8, x, y, 0x7) => {
-                trace!("SUBN V{} V{}", x, y);
+                trace!("8xy7 - SUBN V{} V{}", x, y);
                 if self.v[idx(x)] > self.v[idx(y)] {
                     self.v[0xF - 1] = 1;
                 }
@@ -244,7 +241,7 @@ impl Cpu {
                 Next
             }
             (0x8, x, y, 0xE) => {
-                trace!("SHL V{} V{}", x, y);
+                trace!("8xyE - SHL V{} V{}", x, y);
                 self.v[0xF - 1] = self.v[idx(x)] & 0x1;
                 self.v[idx(x)] = self.v[idx(x)] << 1;
                 Next
@@ -259,33 +256,30 @@ impl Cpu {
             }
             (0xA, n1, n2, n3) => {
                 let i = addr(n1, n2, n3);
-                trace!("LD I, {}", i);
+                trace!("Annn - LD I, {}", i);
                 self.i = i;
                 Next
             }
             (0xB, n1, n2, n3) => {
                 let i = addr(n1, n2, n3);
-                trace!("JP V0, {:x}", i);
+                trace!("Bnnn - JP V0, {:x}", i);
                 Jump(self.i + self.v[0] as u16)
             }
             (0xC, x, k1, k2) => {
                 let rnd: u8 = random();
                 let kk = var(k1, k2);
-                trace!("RND V{} {}", x, kk);
+                trace!("Cxkk - RND V{} {}", x, kk);
                 self.v[x as usize] = rnd & kk;
                 Next
             }
             (0xD, x, y, n) => {
                 let vx = self.v[idx(x)];
                 let vy = self.v[idx(y)];
-                trace!("DRW V{}={}, V{}={}, nibble={}", x, vx, y, vy, n);
-                self.draw(
-                    io,
-                    vx,
-                    vy,
-                    (&ram.buf[self.i as usize..(self.i as usize + idx(n))]).to_vec(),
-                )
-                .unwrap();
+                trace!("Dxyn - DRW V{}={}, V{}={}, nibble={}", x, vx, y, vy, n);
+                let since = self.i as usize;
+                let until = since + idx(n);
+                self.draw(io, vx, vy, (&ram.buf[since..until]).to_vec())
+                    .unwrap();
                 Next
             }
             (0xE, x, 0x9, 0xE) => {
@@ -309,7 +303,7 @@ impl Cpu {
                 Next
             }
             (0xF, x, 0x1, 0x8) => {
-                trace!("LD ST, Vx");
+                trace!("Fx18 - LD ST, Vx");
                 Next
             }
             (0xF, x, 0x1, 0xE) => {
@@ -318,23 +312,33 @@ impl Cpu {
                 Next
             }
             (0xF, x, 0x2, 0x9) => {
-                trace!("LD F, Vx");
+                let vx = self.v[idx(x)];
+                trace!("Fx29 - LD F, Vx={}", vx);
+                self.i = fontaddr(vx);
                 Next
             }
             (0xF, x, 0x3, 0x3) => {
-                trace!("LD B, Vx");
+                trace!("Fx33 - LD B, Vx");
+                let i = self.i as usize;
+                let vx = self.v[idx(x)];
+                let hundreds = (vx / 100) as u8;
+                let tens = ((vx - hundreds) / 10) as u8;
+                let ones = (vx - hundreds - tens) as u8;
+                ram.buf[i] = hundreds;
+                ram.buf[i + 1] = tens;
+                ram.buf[i + 2] = ones;
                 Next
             }
             (0xF, x, 0x5, 0x5) => {
-                trace!("LD [I], V{}", x);
+                trace!("Fx55 - LD [I], V{}", x);
                 for n in 0..x {
                     ram.buf[self.i as usize + idx(n)] = self.v[idx(n)];
                 }
                 Next
             }
             (0xF, x, 0x6, 0x5) => {
-                trace!("LD V{}, [I]", x);
-                for n in 0..x {
+                trace!("Fx65 - LD V{}, I={}", x, self.i);
+                for n in 0..x + 1 {
                     self.v[idx(n)] = ram.buf[self.i as usize + idx(n)];
                 }
                 Next
@@ -342,6 +346,17 @@ impl Cpu {
             _ => {
                 warn!("N/A {:x}{:x}{:x}{:x}", o1, o2, o3, o4);
                 Next
+            }
+        };
+        match res {
+            Next => {
+                self.pc += 2;
+            }
+            Skip => {
+                self.pc += 4;
+            }
+            Jump(loc) => {
+                self.pc = loc;
             }
         }
     }
@@ -370,6 +385,7 @@ impl Ram {
     }
 
     pub fn load<S: Read>(&mut self, mut stream: S) -> Result<(), Error> {
+        self.load_fontset();
         loop {
             let size = stream.read(&mut self.buf[0x200..])?;
             if size == 0 {
@@ -381,7 +397,27 @@ impl Ram {
         Ok(())
     }
 
-    fn load_fontset(&mut self) {}
+    fn load_fontset(&mut self) {
+        let fontset = vec![
+            0xF0, 0x90, 0x90, 0x90, 0xF0, // 0
+            0x20, 0x60, 0x20, 0x20, 0x70, // 1
+            0xF0, 0x10, 0xF0, 0x80, 0xF0, // 2
+            0xF0, 0x10, 0xF0, 0x10, 0xF0, // 3
+            0x90, 0x90, 0xF0, 0x10, 0x10, // 4
+            0xF0, 0x80, 0xF0, 0x10, 0xF0, // 5
+            0xF0, 0x80, 0xF0, 0x90, 0xF0, // 6
+            0xF0, 0x10, 0x20, 0x40, 0x40, // 7
+            0xF0, 0x90, 0xF0, 0x90, 0xF0, // 8
+            0xF0, 0x90, 0xF0, 0x10, 0xF0, // 9
+            0xF0, 0x90, 0xF0, 0x90, 0x90, // A
+            0xE0, 0x90, 0xE0, 0x90, 0xE0, // B
+            0xF0, 0x80, 0x80, 0x80, 0xF0, // C
+            0xE0, 0x90, 0x90, 0x90, 0xE0, // D
+            0xF0, 0x80, 0xF0, 0x80, 0xF0, // E
+            0xF0, 0x80, 0xF0, 0x80, 0x80, // F
+        ];
+        &self.buf[..fontset.len()].copy_from_slice(&fontset);
+    }
 
     fn fetch(&self, addr: usize) -> &[u8] {
         &self.buf[addr..(addr + 2)]

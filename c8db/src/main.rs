@@ -1,10 +1,8 @@
 use std::io::{BufRead, Write};
 use std::path::PathBuf;
 
-use log::*;
 use structopt::StructOpt;
 
-use core::Res::{Jump, Next, Skip};
 use core::{Chip8, Error};
 
 #[derive(Debug, StructOpt)]
@@ -34,17 +32,7 @@ fn main() -> Result<(), Error> {
         let mut line = String::new();
         stdin.lock().read_line(&mut line).unwrap();
 
-        match cpu.cycle(ram, &mut None) {
-            Next => {
-                cpu.pc += 2;
-            }
-            Skip => {
-                cpu.pc += 4;
-            }
-            Jump(loc) => {
-                cpu.pc = loc;
-            }
-        }
+        cpu.cycle(ram, &mut None);
         cpu.dump();
     }
 

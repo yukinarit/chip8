@@ -16,9 +16,7 @@ type Tx = mpsc::Sender<Cmd>;
 
 type Rx = mpsc::Receiver<Cmd>;
 
-static pixel: u8 = 0x0020;
-
-static white_space: u8 = 0x0032;
+static PIXEL: char = ' ';
 
 #[derive(Debug, StructOpt)]
 #[structopt(name = "chip8", about = "chip8 program options.")]
@@ -53,19 +51,43 @@ impl Screen for Adaptor {
     }
 }
 
-fn to_pixel(data: &Vec<u8>) -> String {
-    let mut s: Vec<u8> = vec![];
+fn bitarray(data: &Vec<u8>) -> Vec<u8> {
+    let mut s = Vec::new();
     for byte in data {
         for n in 0..8 {
-            if byte & (1 << (8 - n - 1)) == 1 {
-                s.push(pixel);
+            if byte & (1 << (8 - n - 1)) > 0 {
+                s.push(1);
             } else {
-                s.push(pixel);
+                s.push(0);
             }
         }
     }
+    s
+}
 
-    String::from_utf8_lossy(&s).to_string()
+fn wrap(x_: u8, y_: u8, data: &Vec<u8>) -> VecDeque<Cell> {
+    let mut cells = VecDeque::new();
+    let mut x = x_;
+    let mut y = y_;
+    for byte in data.chunks(8) {
+        for b in byte {
+            //if (x + 1) > 63 {
+            //    x = x_;
+            //    y += 1;
+            //} else {
+            //    x += 1;
+            //}
+            if *b == 1 {
+                let cell = Cell::new(x, y, RB_BOLD, White, White, PIXEL);
+                cells.push_back(cell);
+            }
+            x += 1;
+        }
+        x = x_;
+        y += 1;
+    }
+
+    cells
 }
 
 struct Cell {
@@ -90,24 +112,6 @@ impl Cell {
     }
 }
 
-fn wrap(x: u8, y: u8, s: &str) -> VecDeque<Cell> {
-    let mut cells = VecDeque::new();
-    let mut x = x;
-    let mut y = y;
-    for c in s.chars() {
-        if (x + 1) > 63 {
-            x = 0;
-            y += 1;
-        } else {
-            x += 1;
-        }
-        let cell = Cell::new(x, y, RB_BOLD, White, Black, c);
-        cells.push_back(cell);
-    }
-
-    cells
-}
-
 struct Console;
 
 impl Console {
@@ -115,11 +119,11 @@ impl Console {
         Console {}
     }
 
-    fn run(&mut self, rx: Rx) -> Result<(), ()> {
+    fn run(&mut self, mut chip8: Chip8, rx: Rx) -> Result<(), ()> {
         let mut rb = RustBox::init(Default::default()).unwrap();
 
         rb.present();
-        let timeout = Duration::from_millis(10);
+        let timeout = Duration::from_millis(1);
         loop {
             // Poll UI event.
             match rb.peek_event(timeout.clone(), false) {
@@ -134,10 +138,11 @@ impl Console {
             }
 
             // Poll draw event.
+            chip8.cycle();
             if let Ok(cmd) = rx.recv_timeout(timeout.clone()) {
                 match cmd {
                     Cmd::Draw((x, y, data)) => {
-                        self.draw(&mut rb, wrap(x, y, &to_pixel(&data)));
+                        self.draw(&mut rb, wrap(x, y, &bitarray(&data)));
                         rb.present();
                     }
                     Cmd::Clear => {
@@ -165,16 +170,13 @@ fn run(opts: Option) -> Result<(), ()> {
     let (tx, rx) = mpsc::channel();
     let adaptor = Adaptor::new(tx);
 
-    let th = std::thread::spawn(move || {
-        let mut chip8 = Chip8::new();
-        let rom = &opts.rom.canonicalize().unwrap();
-        let file = std::fs::File::open(&rom.to_str().unwrap()).unwrap();
-        chip8.ram.load(file).unwrap();
-        chip8.screen = Some(Box::new(adaptor));
-        chip8.run();
-    });
+    let mut chip8 = Chip8::new();
+    let rom = &opts.rom.canonicalize().unwrap();
+    let file = std::fs::File::open(&rom.to_str().unwrap()).unwrap();
+    chip8.ram.load(file).unwrap();
+    chip8.screen = Some(Box::new(adaptor));
 
-    Console::new().run(rx)
+    Console::new().run(chip8, rx)
 }
 
 fn main() -> Result<(), ()> {
