@@ -2,12 +2,13 @@ use std::collections::VecDeque;
 use std::default::Default;
 use std::path::PathBuf;
 use std::sync::mpsc;
-use std::time::Duration;
+use std::thread::sleep;
+use std::time::{Duration, Instant};
 
 use core::{Chip8, Screen};
 use log::*;
 use rustbox::{
-    Color::{self, Black, White},
+    Color::{self, White},
     Key, RustBox, Style, RB_BOLD,
 };
 use structopt::StructOpt;
@@ -22,6 +23,10 @@ static PIXEL: char = ' ';
 #[structopt(name = "chip8", about = "chip8 program options.")]
 struct Option {
     rom: PathBuf,
+    #[structopt(short = "f", long = "fps", default_value = "10")]
+    fps: i32,
+    #[structopt(short = "c", long = "cycle-per-frame", default_value = "10")]
+    cycle_per_frame: i32,
 }
 
 enum Cmd {
@@ -71,12 +76,6 @@ fn wrap(x_: u8, y_: u8, data: &Vec<u8>) -> VecDeque<Cell> {
     let mut y = y_;
     for byte in data.chunks(8) {
         for b in byte {
-            //if (x + 1) > 63 {
-            //    x = x_;
-            //    y += 1;
-            //} else {
-            //    x += 1;
-            //}
             if *b == 1 {
                 let cell = Cell::new(x, y, RB_BOLD, White, White, PIXEL);
                 cells.push_back(cell);
@@ -119,12 +118,14 @@ impl Console {
         Console {}
     }
 
-    fn run(&mut self, mut chip8: Chip8, rx: Rx) -> Result<(), ()> {
+    fn run(&mut self, mut chip8: Chip8, rx: Rx, opts: Option) -> Result<(), ()> {
         let mut rb = RustBox::init(Default::default()).unwrap();
 
-        rb.present();
         let timeout = Duration::from_millis(1);
+        let frame = Duration::from_millis((1000 / opts.fps) as u64);
         loop {
+            let now = Instant::now();
+
             // Poll UI event.
             match rb.peek_event(timeout.clone(), false) {
                 Ok(rustbox::Event::KeyEvent(key)) => match key {
@@ -137,18 +138,25 @@ impl Console {
                 _ => {}
             }
 
+            // Run Chip8 Instructions.
+            for _ in 0..opts.cycle_per_frame {
+                chip8.cycle();
+            }
+
             // Poll draw event.
-            chip8.cycle();
-            if let Ok(cmd) = rx.recv_timeout(timeout.clone()) {
+            for cmd in rx.try_iter() {
                 match cmd {
                     Cmd::Draw((x, y, data)) => {
                         self.draw(&mut rb, wrap(x, y, &bitarray(&data)));
-                        rb.present();
                     }
                     Cmd::Clear => {
                         rb.clear();
                     }
                 }
+            }
+            rb.present();
+            if let Some(remaining) = frame.checked_sub(now.elapsed()) {
+                sleep(remaining);
             }
         }
         Ok(())
@@ -176,7 +184,7 @@ fn run(opts: Option) -> Result<(), ()> {
     chip8.ram.load(file).unwrap();
     chip8.screen = Some(Box::new(adaptor));
 
-    Console::new().run(chip8, rx)
+    Console::new().run(chip8, rx, opts)
 }
 
 fn main() -> Result<(), ()> {
