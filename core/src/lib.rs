@@ -1,5 +1,7 @@
-use std::convert::From;
+#![feature(try_from)]
+use std::convert::{From, TryFrom};
 use std::io::Read;
+use std::sync::mpsc;
 
 use log::*;
 use rand::prelude::*;
@@ -17,7 +19,8 @@ impl From<std::io::Error> for Error {
 pub struct Chip8 {
     pub cpu: Cpu,
     pub ram: Ram,
-    pub screen: Option<Box<Screen>>,
+    pub dsp: Option<Box<Display>>,
+    pub inp: Option<mpsc::Receiver<Key>>,
 }
 
 impl Chip8 {
@@ -25,23 +28,27 @@ impl Chip8 {
         Chip8 {
             cpu: Cpu::new(),
             ram: Ram::new(),
-            screen: None,
+            dsp: None,
+            inp: None,
         }
     }
 
     pub fn run(&mut self) {
-        self.cpu.run(&mut self.ram, &mut self.screen)
+        self.cpu.run(&mut self.ram, &mut self.dsp, &mut self.inp)
     }
 
     pub fn cycle(&mut self) {
-        self.cpu.cycle(&mut self.ram, &mut self.screen)
+        self.cpu.cycle(&mut self.ram, &mut self.dsp, &mut self.inp)
     }
 }
 
-pub trait Screen {
-    fn draw(&self, x: u8, y: u8, data: Vec<u8>) -> Result<(), ()>;
+pub trait Display {
+    fn draw(&self, x: u8, y: u8, data: Vec<u8>) -> Result<u8, ()>;
     fn clear(&self);
 }
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Key(pub char);
 
 #[derive(Debug)]
 pub struct Cpu {
@@ -55,6 +62,8 @@ pub struct Cpu {
     sp: u16,
     /// Program counter.
     pub pc: u16,
+    /// Dilay timer.
+    pub dt: u8,
 }
 
 pub enum Res {
@@ -89,33 +98,45 @@ impl Cpu {
             stack: [0; 0xF],
             sp: 0,
             pc: 0x200,
+            dt: 0,
         }
     }
 
-    fn draw(&self, io: &mut Option<Box<Screen>>, x: u8, y: u8, data: Vec<u8>) -> Result<(), ()> {
-        if let Some(screen) = io {
-            screen.draw(x, y, data);
+    fn draw(&self, io: &mut Option<Box<Display>>, x: u8, y: u8, data: Vec<u8>) -> Result<u8, ()> {
+        if let Some(dsp) = io {
+            dsp.draw(x, y, data)
+        } else {
+            Err(())
+        }
+    }
+
+    fn clear(&self, io: &mut Option<Box<Display>>) -> Result<(), ()> {
+        if let Some(dsp) = io {
+            dsp.clear();
         }
         Ok(())
     }
 
-    fn clear(&self, io: &mut Option<Box<Screen>>) -> Result<(), ()> {
-        if let Some(screen) = io {
-            screen.clear();
-        }
-        Ok(())
-    }
-
-    pub fn run(&mut self, ram: &mut Ram, io: &mut Option<Box<Screen>>) {
+    pub fn run(
+        &mut self,
+        ram: &mut Ram,
+        io: &mut Option<Box<Display>>,
+        inp: &mut Option<mpsc::Receiver<Key>>,
+    ) {
         loop {
             if self.pc >= 0xFFF || (self.pc + 1) >= 0xFFF {
                 break;
             }
-            self.cycle(ram, io);
+            self.cycle(ram, io, inp);
         }
     }
 
-    pub fn cycle(&mut self, ram: &mut Ram, io: &mut Option<Box<Screen>>) {
+    pub fn cycle(
+        &mut self,
+        ram: &mut Ram,
+        io: &mut Option<Box<Display>>,
+        inp: &mut Option<mpsc::Receiver<Key>>,
+    ) {
         let pc = self.pc as usize;
         let o1: u8 = ram.buf[pc] >> 4;
         let o2: u8 = ram.buf[pc] & 0xf;
@@ -129,8 +150,9 @@ impl Cpu {
             }
             (0x0, 0x0, 0xE, 0xE) => {
                 trace!("00EE - RET");
+                let pc = self.stack[self.sp as usize];
                 self.sp -= 1;
-                Jump(self.stack[self.sp as usize])
+                Jump(pc)
             }
             (0x0, n1, n2, n3) => {
                 let nnn = addr(n1, n2, n3);
@@ -145,8 +167,8 @@ impl Cpu {
             (0x2, n1, n2, n3) => {
                 let nnn = addr(n1, n2, n3);
                 trace!("2nnn - CALL {}", nnn);
-                self.stack[self.sp as usize] = self.pc;
                 self.sp += 1;
+                self.stack[self.sp as usize] = self.pc;
                 Jump(nnn)
             }
             (0x3, x, k1, k2) => {
@@ -213,17 +235,20 @@ impl Cpu {
                 let a = self.v[idx(x)] as u16 + self.v[idx(y)] as u16;
                 if a > 0xff {
                     self.v[0xF - 1] = 1;
-                    self.v[idx(x)] = (a & 0xFF) as u8;
                 } else {
-                    self.v[idx(x)] = a as u8;
+                    self.v[0xF - 1] = 0;
                 }
+                self.v[idx(x)] = (a & 0xFF) as u8;
                 Next
             }
             (0x8, x, y, 0x5) => {
                 trace!("8xy5 - SUB V{} V{}", x, y);
                 if self.v[idx(x)] > self.v[idx(y)] {
                     self.v[0xF - 1] = 1;
+                } else {
+                    self.v[0xF - 1] = 0;
                 }
+                self.v[idx(x)] = self.v[idx(x)] - self.v[idx(y)];
                 Next
             }
             (0x8, x, y, 0x6) => {
@@ -234,16 +259,18 @@ impl Cpu {
             }
             (0x8, x, y, 0x7) => {
                 trace!("8xy7 - SUBN V{} V{}", x, y);
-                if self.v[idx(x)] > self.v[idx(y)] {
+                if self.v[idx(y)] > self.v[idx(x)] {
                     self.v[0xF - 1] = 1;
+                } else {
+                    self.v[0xF - 1] = 0;
                 }
                 self.v[idx(x)] = self.v[idx(y)] - self.v[idx(x)];
                 Next
             }
             (0x8, x, y, 0xE) => {
                 trace!("8xyE - SHL V{} V{}", x, y);
-                self.v[0xF - 1] = self.v[idx(x)] & 0x1;
-                self.v[idx(x)] = self.v[idx(x)] << 1;
+                self.v[0xF - 1] = self.v[idx(x)] & 128;
+                self.v[idx(x)] *= 2;
                 Next
             }
             (0x9, x, y, 0x0) => {
@@ -255,51 +282,95 @@ impl Cpu {
                 }
             }
             (0xA, n1, n2, n3) => {
-                let i = addr(n1, n2, n3);
-                trace!("Annn - LD I, {}", i);
-                self.i = i;
+                self.i = addr(n1, n2, n3);
+                trace!("Annn - LD I, {}", self.i);
                 Next
             }
             (0xB, n1, n2, n3) => {
-                let i = addr(n1, n2, n3);
+                let i = addr(n1, n2, n3) + self.v[0] as u16;
                 trace!("Bnnn - JP V0, {:x}", i);
-                Jump(self.i + self.v[0] as u16)
+                Jump(i)
             }
             (0xC, x, k1, k2) => {
                 let rnd: u8 = random();
                 let kk = var(k1, k2);
                 trace!("Cxkk - RND V{} {}", x, kk);
-                self.v[x as usize] = rnd & kk;
+                self.v[idx(x)] = rnd & kk;
                 Next
             }
             (0xD, x, y, n) => {
                 let vx = self.v[idx(x)];
                 let vy = self.v[idx(y)];
-                trace!("Dxyn - DRW V{}={}, V{}={}, nibble={}", x, vx, y, vy, n);
                 let since = self.i as usize;
                 let until = since + idx(n);
-                self.draw(io, vx, vy, (&ram.buf[since..until]).to_vec())
-                    .unwrap();
+                let bytes = (&ram.buf[since..until]).to_vec();
+                trace!(
+                    "Dxyn - DRW V{}={}, V{}={}, nibble={}, bytes={:?}",
+                    x,
+                    vx,
+                    y,
+                    vy,
+                    n,
+                    bytes
+                );
+                self.v[0xF - 1] = self.draw(io, vx, vy, bytes).unwrap();
                 Next
             }
             (0xE, x, 0x9, 0xE) => {
-                trace!("SKP Vx");
-                Next
+                let cx = char::try_from(self.v[idx(x)] as u32).unwrap();
+                trace!("Ex9E - SKP V{}={} k={}", x, self.v[idx(x)], cx);
+                match inp.as_ref() {
+                    Some(inp) => {
+                        if let Some(_) = inp.try_iter().find(|c| c.0 == cx) {
+                            Skip
+                        } else {
+                            Next
+                        }
+                    }
+                    None => Next,
+                }
             }
             (0xE, x, 0xA, 0x1) => {
-                trace!("SKNP Vx");
-                Next
+                let cx = char::try_from(self.v[idx(x)] as u32).unwrap();
+                trace!("ExA1 - SKNP V{}={} k={}", x, self.v[idx(x)], cx);
+                match inp.as_ref() {
+                    Some(inp) => {
+                        if let Some(_) = inp.try_iter().find(|c| c.0 == cx) {
+                            Next
+                        } else {
+                            Skip
+                        }
+                    }
+                    None => Skip,
+                }
             }
             (0xF, x, 0x0, 0x7) => {
-                trace!("LD Vx, DT");
+                trace!("Fx07 - LD Vx, DT");
+                self.v[idx(x)] = self.dt;
                 Next
             }
             (0xF, x, 0x0, 0xA) => {
-                trace!("LD Vx, K");
-                Next
+                trace!("Fx0A - LD Vx, K");
+                let mut pressed = false;
+                match inp.as_ref() {
+                    Some(inp) => {
+                        for c in inp.try_iter() {
+                            self.v[idx(x)] = u32::from(c.0) as u8;
+                            pressed = true;
+                        }
+
+                        if pressed {
+                            Next
+                        } else {
+                            Jump(self.pc)
+                        }
+                    }
+                    None => Jump(self.pc),
+                }
             }
             (0xF, x, 0x1, 0x5) => {
-                trace!("LD DT, Vx");
+                trace!("Fx15 - LD DT, Vx");
+                self.dt = self.v[idx(x)];
                 Next
             }
             (0xF, x, 0x1, 0x8) => {
@@ -321,17 +392,14 @@ impl Cpu {
                 trace!("Fx33 - LD B, Vx");
                 let i = self.i as usize;
                 let vx = self.v[idx(x)];
-                let hundreds = (vx / 100) as u8;
-                let tens = ((vx - hundreds) / 10) as u8;
-                let ones = (vx - hundreds - tens) as u8;
-                ram.buf[i] = hundreds;
-                ram.buf[i + 1] = tens;
-                ram.buf[i + 2] = ones;
+                ram.buf[i] = (vx / 100) as u8 % 10;
+                ram.buf[i + 1] = (vx / 10) as u8 % 10;
+                ram.buf[i + 2] = vx % 10;
                 Next
             }
             (0xF, x, 0x5, 0x5) => {
                 trace!("Fx55 - LD [I], V{}", x);
-                for n in 0..x {
+                for n in 0..x + 1 {
                     ram.buf[self.i as usize + idx(n)] = self.v[idx(n)];
                 }
                 Next
@@ -359,12 +427,23 @@ impl Cpu {
                 self.pc = loc;
             }
         }
+        if self.dt > 0 {
+            self.dt -= 1;
+        }
+        self.dump();
     }
 
     pub fn dump(&self) {
-        println!(
-            "v{:?} i={} stack={:?} sp={} pc={}",
-            self.v, self.i, self.stack, self.sp, self.pc
+        trace!(
+            " v{:?} i={}({:x}) stack={:?} sp={} pc={}({:x}) dt={}",
+            self.v,
+            self.i,
+            self.i,
+            self.stack,
+            self.sp,
+            self.pc,
+            self.pc,
+            self.dt
         );
     }
 }
