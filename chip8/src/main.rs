@@ -1,194 +1,251 @@
-use std::collections::VecDeque;
+use std::convert::From;
 use std::default::Default;
 use std::path::PathBuf;
 use std::sync::mpsc;
+use std::sync::Arc;
+use std::sync::Mutex;
 use std::thread::sleep;
 use std::time::{Duration, Instant};
 
-use core::{Chip8, Screen};
+use core::{Chip8, Display};
 use log::*;
 use rustbox::{
-    Color::{self, White},
-    Key, RustBox, Style, RB_BOLD,
+    Color::{self, Black, White},
+    Key, RustBox, RB_BOLD,
 };
 use structopt::StructOpt;
 
-type Tx = mpsc::Sender<Cmd>;
-
-type Rx = mpsc::Receiver<Cmd>;
-
 static PIXEL: char = ' ';
+
+const WIDTH: usize = 64;
+
+const HEIGHT: usize = 32;
 
 #[derive(Debug, StructOpt)]
 #[structopt(name = "chip8", about = "chip8 program options.")]
-struct Option {
+struct Args {
     rom: PathBuf,
-    #[structopt(short = "f", long = "fps", default_value = "10")]
+    #[structopt(short = "f", long = "fps", default_value = "60")]
     fps: i32,
     #[structopt(short = "c", long = "cycle-per-frame", default_value = "10")]
     cycle_per_frame: i32,
 }
 
-enum Cmd {
-    Draw((u8, u8, Vec<u8>)),
-    Clear,
+#[derive(Debug, Clone, Copy)]
+enum Fill {
+    Fill,
+    Unfill,
 }
 
-struct Adaptor {
-    tx: Tx,
-}
-
-impl Adaptor {
-    fn new(tx: Tx) -> Adaptor {
-        Adaptor { tx: tx }
+impl std::convert::From<Fill> for Color {
+    fn from(f: Fill) -> Color {
+        match f {
+            Fill::Fill => White,
+            Fill::Unfill => Black,
+        }
     }
 }
 
-impl Screen for Adaptor {
-    fn draw(&self, x: u8, y: u8, data: Vec<u8>) -> Result<(), ()> {
-        self.tx
-            .send(Cmd::Draw((x, y, data)))
-            .map_err(|e| error!("{:?}", e))
+impl std::convert::From<Fill> for u8 {
+    fn from(f: Fill) -> u8 {
+        match f {
+            Fill::Fill => 1,
+            Fill::Unfill => 0,
+        }
+    }
+}
+
+impl std::convert::From<u8> for Fill {
+    fn from(f: u8) -> Fill {
+        match f {
+            1 => Fill::Fill,
+            _ => Fill::Unfill,
+        }
+    }
+}
+
+struct DisplayAdaptor {
+    console: Arc<Mutex<Console>>,
+}
+
+impl DisplayAdaptor {
+    fn new(console: Arc<Mutex<Console>>) -> DisplayAdaptor {
+        DisplayAdaptor { console: console }
+    }
+}
+
+impl Display for DisplayAdaptor {
+    fn draw(&self, x: u8, y: u8, data: Vec<u8>) -> Result<u8, ()> {
+        self.console.lock().unwrap().draw(x, y, data)
     }
 
     fn clear(&self) {
-        self.tx.send(Cmd::Clear).unwrap()
+        self.console.lock().unwrap().clear();
     }
 }
 
-fn bitarray(data: &Vec<u8>) -> Vec<u8> {
+fn bitarray(byte: u8) -> Vec<u8> {
     let mut s = Vec::new();
-    for byte in data {
-        for n in 0..8 {
-            if byte & (1 << (8 - n - 1)) > 0 {
-                s.push(1);
-            } else {
-                s.push(0);
-            }
-        }
+    for n in 0..8 {
+        s.push((byte >> (7 - n)) & 0x1);
     }
     s
 }
 
-fn wrap(x_: u8, y_: u8, data: &Vec<u8>) -> VecDeque<Cell> {
-    let mut cells = VecDeque::new();
-    let mut x = x_;
-    let mut y = y_;
-    for byte in data.chunks(8) {
-        for b in byte {
-            if *b == 1 {
-                let cell = Cell::new(x, y, RB_BOLD, White, White, PIXEL);
-                cells.push_back(cell);
-            }
-            x += 1;
-        }
-        x = x_;
-        y += 1;
-    }
-
-    cells
+struct Console {
+    rb: RustBox,
+    keyboard: mpsc::Sender<core::Key>,
+    /// Current screen buffer.
+    curr: [[u8; HEIGHT]; WIDTH],
 }
-
-struct Cell {
-    x: u8,
-    y: u8,
-    st: Style,
-    bg: Color,
-    fg: Color,
-    ch: char,
-}
-
-impl Cell {
-    fn new(x: u8, y: u8, st: Style, bg: Color, fg: Color, ch: char) -> Self {
-        Cell {
-            x: x,
-            y: y,
-            st: st,
-            bg: bg,
-            fg: fg,
-            ch: ch,
-        }
-    }
-}
-
-struct Console;
 
 impl Console {
-    fn new() -> Self {
-        Console {}
-    }
-
-    fn run(&mut self, mut chip8: Chip8, rx: Rx, opts: Option) -> Result<(), ()> {
-        let mut rb = RustBox::init(Default::default()).unwrap();
-
-        let timeout = Duration::from_millis(1);
-        let frame = Duration::from_millis((1000 / opts.fps) as u64);
-        loop {
-            let now = Instant::now();
-
-            // Poll UI event.
-            match rb.peek_event(timeout.clone(), false) {
-                Ok(rustbox::Event::KeyEvent(key)) => match key {
-                    Key::Char('q') => {
-                        break;
-                    }
-                    _ => {}
-                },
-                Err(e) => error!("{}", e),
-                _ => {}
-            }
-
-            // Run Chip8 Instructions.
-            for _ in 0..opts.cycle_per_frame {
-                chip8.cycle();
-            }
-
-            // Poll draw event.
-            for cmd in rx.try_iter() {
-                match cmd {
-                    Cmd::Draw((x, y, data)) => {
-                        self.draw(&mut rb, wrap(x, y, &bitarray(&data)));
-                    }
-                    Cmd::Clear => {
-                        rb.clear();
-                    }
-                }
-            }
-            rb.present();
-            if let Some(remaining) = frame.checked_sub(now.elapsed()) {
-                sleep(remaining);
+    fn new(rb: RustBox, keyboard: mpsc::Sender<core::Key>) -> Self {
+        let console = Console {
+            rb: rb,
+            keyboard: keyboard,
+            curr: [[0; HEIGHT]; WIDTH],
+        };
+        for x in 0..WIDTH {
+            for y in 0..HEIGHT {
+                console.draw_pixel(x, y, Fill::Unfill);
             }
         }
-        Ok(())
+        console
     }
 
-    fn draw(&self, rbox: &mut RustBox, mut cells: VecDeque<Cell>) {
-        loop {
-            match cells.pop_front() {
-                Some(c) => {
-                    rbox.print_char(c.x as usize, c.y as usize, c.st, c.fg, c.bg, c.ch);
+    fn peek_keyevent(&self) -> Option<()> {
+        match self.rb.peek_event(Duration::from_millis(1), false) {
+            Ok(rustbox::Event::KeyEvent(key)) => match key {
+                Key::Esc => {
+                    std::process::exit(0);
                 }
-                None => break,
+                Key::Char(c) => {
+                    let k = core::Key::from(c);
+                    if k.0 != 0x99 {
+                        debug!("sending key {:?}", c);
+                        self.keyboard
+                            .send(k)
+                            .map_err(|e| error!("Keyboard error: {}", e))
+                            .unwrap();
+                    }
+                }
+                _ => {}
+            },
+            Ok(rustbox::Event::NoEvent) => {
+                return None;
+            }
+            Err(e) => {
+                error!("{}", e);
+            }
+            _ => {}
+        };
+
+        Some(())
+    }
+
+    fn draw(&mut self, x: u8, y: u8, data: Vec<u8>) -> Result<u8, ()> {
+        let x = x as usize;
+        let y = y as usize;
+        let mut vf = 0;
+        for (iy, b) in data.iter().enumerate() {
+            let next = bitarray(*b);
+            for (ix, nb) in next.iter().enumerate() {
+                if x + ix >= WIDTH || y + iy >= HEIGHT {
+                    continue;
+                }
+                let cb = self.curr[x + ix][y + iy];
+                match (cb, nb) {
+                    (0, 0) => {}
+                    (0, 1) => {
+                        self.draw_pixel(x + ix, y + iy, Fill::Fill);
+                    }
+                    (1, 0) => {
+                        self.draw_pixel(x + ix, y + iy, Fill::Fill);
+                    }
+                    (1, 1) => {
+                        vf = 1;
+                        self.draw_pixel(x + ix, y + iy, Fill::Unfill);
+                    }
+                    _ => {
+                        panic!("Illegal bit value: cb={}, nb={}", cb, nb);
+                    }
+                }
+                self.curr[x + ix][y + iy] ^= nb;
+            }
+        }
+
+        Ok(vf)
+    }
+
+    fn draw_pixel(&self, x: usize, y: usize, fill: Fill) {
+        // debug!("Draw pixel {} {} {:?}", x, y, fill);
+        self.rb.print_char(x, y, RB_BOLD, White, fill.into(), PIXEL);
+    }
+
+    fn flush(&mut self) {
+        self.rb.present();
+    }
+
+    fn clear(&mut self) {
+        self.rb.clear();
+        for x in 0..WIDTH {
+            for y in 0..HEIGHT {
+                self.curr[x][y] = 0;
+                self.draw_pixel(x, y, Fill::Unfill);
             }
         }
     }
 }
 
-fn run(opts: Option) -> Result<(), ()> {
-    let (tx, rx) = mpsc::channel();
-    let adaptor = Adaptor::new(tx);
+fn emuloop(mut chip8: Chip8, console: Arc<Mutex<Console>>, opts: Args) -> Result<(), ()> {
+    let frame = Duration::from_millis((1000 / opts.fps) as u64);
+    loop {
+        let now = Instant::now();
+
+        // Run Chip8 Instructions.
+        for _ in 0..opts.cycle_per_frame {
+            chip8.cycle();
+        }
+
+        match console.lock() {
+            Ok(mut c) => {
+                loop {
+                    if let None = c.peek_keyevent() {
+                        break;
+                    }
+                }
+                c.flush();
+            }
+            Err(e) => {
+                error!("Unable to unlock Console: {}", e);
+            }
+        }
+
+        if let Some(remaining) = frame.checked_sub(now.elapsed()) {
+            sleep(remaining);
+        }
+    }
+}
+
+fn run(opts: Args) -> Result<(), ()> {
+    let (itx, irx) = mpsc::channel();
+    let rb = RustBox::init(Default::default()).unwrap();
+    let console = Arc::new(Mutex::new(Console::new(rb, itx)));
+    let adaptor = DisplayAdaptor::new(console.clone());
 
     let mut chip8 = Chip8::new();
     let rom = &opts.rom.canonicalize().unwrap();
     let file = std::fs::File::open(&rom.to_str().unwrap()).unwrap();
     chip8.ram.load(file).unwrap();
-    chip8.screen = Some(Box::new(adaptor));
-
-    Console::new().run(chip8, rx, opts)
+    chip8.dsp = Some(Box::new(adaptor));
+    chip8.inp = Some(irx);
+    //console.run(chip8, itx, opts)
+    emuloop(chip8, console, opts)
 }
 
 fn main() -> Result<(), ()> {
-    env_logger::init();
-    let opts = Option::from_args();
+    log4rs::init_file("logger.yml", Default::default()).unwrap();
+    let opts = Args::from_args();
     run(opts)
 }

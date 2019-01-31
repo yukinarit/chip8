@@ -1,9 +1,10 @@
 use std::io::{BufRead, Write};
 use std::path::PathBuf;
+use std::sync::mpsc;
 
 use structopt::StructOpt;
 
-use core::{Chip8, Error};
+use core::{Chip8, Error, Key};
 
 #[derive(Debug, StructOpt)]
 #[structopt(name = "c8db", about = "c8db program options.")]
@@ -23,6 +24,8 @@ fn main() -> Result<(), Error> {
     let rom = &opts.rom.canonicalize().unwrap();
     let file = std::fs::File::open(&rom.to_str().unwrap()).unwrap();
     chip8.ram.load(file)?;
+    let (kb, rx) = mpsc::channel();
+    let mut rx = Some(rx);
 
     let cpu = &mut chip8.cpu;
     let ram = &mut chip8.ram;
@@ -31,9 +34,11 @@ fn main() -> Result<(), Error> {
         prompt();
         let mut line = String::new();
         stdin.lock().read_line(&mut line).unwrap();
+        cpu.cycle(ram, &mut None, &mut rx);
 
-        cpu.cycle(ram, &mut None);
-        cpu.dump();
+        if !line.is_empty() {
+            kb.send(Key(line.chars().next().unwrap())).unwrap();
+        }
     }
 
     Ok(())
