@@ -1,3 +1,4 @@
+use std::convert::From;
 use std::default::Default;
 use std::path::PathBuf;
 use std::sync::mpsc;
@@ -22,7 +23,7 @@ const HEIGHT: usize = 32;
 
 #[derive(Debug, StructOpt)]
 #[structopt(name = "chip8", about = "chip8 program options.")]
-struct Option {
+struct Args {
     rom: PathBuf,
     #[structopt(short = "f", long = "fps", default_value = "60")]
     fps: i32,
@@ -54,6 +55,15 @@ impl std::convert::From<Fill> for u8 {
     }
 }
 
+impl std::convert::From<u8> for Fill {
+    fn from(f: u8) -> Fill {
+        match f {
+            1 => Fill::Fill,
+            _ => Fill::Unfill,
+        }
+    }
+}
+
 struct DisplayAdaptor {
     console: Arc<Mutex<Console>>,
 }
@@ -77,11 +87,7 @@ impl Display for DisplayAdaptor {
 fn bitarray(byte: u8) -> Vec<u8> {
     let mut s = Vec::new();
     for n in 0..8 {
-        if byte & (1 << (7 - n)) > 0 {
-            s.push(1);
-        } else {
-            s.push(0);
-        }
+        s.push((byte >> (7 - n)) & 0x1);
     }
     s
 }
@@ -95,61 +101,85 @@ struct Console {
 
 impl Console {
     fn new(rb: RustBox, keyboard: mpsc::Sender<core::Key>) -> Self {
-        Console {
+        let console = Console {
             rb: rb,
             keyboard: keyboard,
             curr: [[0; HEIGHT]; WIDTH],
+        };
+        for x in 0..WIDTH {
+            for y in 0..HEIGHT {
+                console.draw_pixel(x, y, Fill::Unfill);
+            }
         }
+        console
     }
 
-    fn peek_keyevent(&self) {
+    fn peek_keyevent(&self) -> Option<()> {
         match self.rb.peek_event(Duration::from_millis(1), false) {
             Ok(rustbox::Event::KeyEvent(key)) => match key {
                 Key::Esc => {
                     std::process::exit(0);
                 }
                 Key::Char(c) => {
-                    self.keyboard
-                        .send(core::Key(c))
-                        .map_err(|e| error!("Keyboard error: {}", e))
-                        .unwrap();
+                    let k = core::Key::from(c);
+                    if k.0 != 0x99 {
+                        debug!("sending key {:?}", c);
+                        self.keyboard
+                            .send(k)
+                            .map_err(|e| error!("Keyboard error: {}", e))
+                            .unwrap();
+                    }
                 }
                 _ => {}
             },
-            Err(e) => error!("{}", e),
+            Ok(rustbox::Event::NoEvent) => {
+                return None;
+            }
+            Err(e) => {
+                error!("{}", e);
+            }
             _ => {}
-        }
+        };
+
+        Some(())
     }
 
     fn draw(&mut self, x: u8, y: u8, data: Vec<u8>) -> Result<u8, ()> {
         let x = x as usize;
         let y = y as usize;
         let mut vf = 0;
-        for (i, b) in data.iter().enumerate() {
-            let curr = bitarray(self.curr[x][y + i]);
+        for (iy, b) in data.iter().enumerate() {
             let next = bitarray(*b);
-
-            for (j, (cb, nb)) in curr.iter().zip(next).enumerate() {
-                let fill = match (cb, nb) {
-                    (0, 0) => Fill::Unfill,
-                    (0, 1) => Fill::Fill,
-                    (1, 0) => Fill::Fill,
+            for (ix, nb) in next.iter().enumerate() {
+                if x + ix >= WIDTH || y + iy >= HEIGHT {
+                    continue;
+                }
+                let cb = self.curr[x + ix][y + iy];
+                match (cb, nb) {
+                    (0, 0) => {}
+                    (0, 1) => {
+                        self.draw_pixel(x + ix, y + iy, Fill::Fill);
+                    }
+                    (1, 0) => {
+                        self.draw_pixel(x + ix, y + iy, Fill::Fill);
+                    }
                     (1, 1) => {
                         vf = 1;
-                        Fill::Unfill
+                        self.draw_pixel(x + ix, y + iy, Fill::Unfill);
                     }
-                    _ => continue,
-                };
-                self.draw_pixel(x + j, y + i, fill);
+                    _ => {
+                        panic!("Illegal bit value: cb={}, nb={}", cb, nb);
+                    }
+                }
+                self.curr[x + ix][y + iy] ^= nb;
             }
-            self.curr[x][y + i] ^= *b;
         }
 
         Ok(vf)
     }
 
     fn draw_pixel(&self, x: usize, y: usize, fill: Fill) {
-        // println!("{} {} {:?}", x, y, fill);
+        // debug!("Draw pixel {} {} {:?}", x, y, fill);
         self.rb.print_char(x, y, RB_BOLD, White, fill.into(), PIXEL);
     }
 
@@ -157,12 +187,18 @@ impl Console {
         self.rb.present();
     }
 
-    fn clear(&self) {
+    fn clear(&mut self) {
         self.rb.clear();
+        for x in 0..WIDTH {
+            for y in 0..HEIGHT {
+                self.curr[x][y] = 0;
+                self.draw_pixel(x, y, Fill::Unfill);
+            }
+        }
     }
 }
 
-fn emuloop(mut chip8: Chip8, console: Arc<Mutex<Console>>, opts: Option) -> Result<(), ()> {
+fn emuloop(mut chip8: Chip8, console: Arc<Mutex<Console>>, opts: Args) -> Result<(), ()> {
     let frame = Duration::from_millis((1000 / opts.fps) as u64);
     loop {
         let now = Instant::now();
@@ -174,7 +210,11 @@ fn emuloop(mut chip8: Chip8, console: Arc<Mutex<Console>>, opts: Option) -> Resu
 
         match console.lock() {
             Ok(mut c) => {
-                c.peek_keyevent();
+                loop {
+                    if let None = c.peek_keyevent() {
+                        break;
+                    }
+                }
                 c.flush();
             }
             Err(e) => {
@@ -188,7 +228,7 @@ fn emuloop(mut chip8: Chip8, console: Arc<Mutex<Console>>, opts: Option) -> Resu
     }
 }
 
-fn run(opts: Option) -> Result<(), ()> {
+fn run(opts: Args) -> Result<(), ()> {
     let (itx, irx) = mpsc::channel();
     let rb = RustBox::init(Default::default()).unwrap();
     let console = Arc::new(Mutex::new(Console::new(rb, itx)));
@@ -206,6 +246,6 @@ fn run(opts: Option) -> Result<(), ()> {
 
 fn main() -> Result<(), ()> {
     log4rs::init_file("logger.yml", Default::default()).unwrap();
-    let opts = Option::from_args();
+    let opts = Args::from_args();
     run(opts)
 }

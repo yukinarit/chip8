@@ -48,16 +48,40 @@ pub trait Display {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct Key(pub char);
+pub struct Key(pub u8);
+
+impl std::convert::From<char> for Key {
+    fn from(c: char) -> Key {
+        match c {
+            '1' => Key(0x1),
+            '2' => Key(0x2),
+            '3' => Key(0x3),
+            'q' => Key(0x4),
+            'w' => Key(0x5),
+            'e' => Key(0x6),
+            'a' => Key(0x7),
+            's' => Key(0x8),
+            'd' => Key(0x9),
+            'z' => Key(0xA),
+            'x' => Key(0x0),
+            'c' => Key(0xB),
+            '4' => Key(0xC),
+            'r' => Key(0xD),
+            'f' => Key(0xE),
+            'v' => Key(0xF),
+            _ => Key(0x99),
+        }
+    }
+}
 
 #[derive(Debug)]
 pub struct Cpu {
     /// 8bit general purpose Registers.
-    v: [u8; 0xF],
+    v: [u8; 16],
     /// Index register.
     i: u16,
     /// Stack,
-    stack: [u16; 0xF],
+    stack: [u16; 16],
     /// Stack pointer.
     sp: u16,
     /// Program counter.
@@ -93,9 +117,9 @@ fn idx(x: u8) -> usize {
 impl Cpu {
     fn new() -> Self {
         Cpu {
-            v: [0; 0xF],
+            v: [0; 16],
             i: 0,
-            stack: [0; 0xF],
+            stack: [0; 16],
             sp: 0,
             pc: 0x200,
             dt: 0,
@@ -150,9 +174,9 @@ impl Cpu {
             }
             (0x0, 0x0, 0xE, 0xE) => {
                 trace!("00EE - RET");
-                let pc = self.stack[self.sp as usize];
+                let pc = self.stack[self.sp as usize - 1];
                 self.sp -= 1;
-                Jump(pc)
+                Jump(pc + 2)
             }
             (0x0, n1, n2, n3) => {
                 let nnn = addr(n1, n2, n3);
@@ -167,14 +191,16 @@ impl Cpu {
             (0x2, n1, n2, n3) => {
                 let nnn = addr(n1, n2, n3);
                 trace!("2nnn - CALL {}", nnn);
-                self.sp += 1;
                 self.stack[self.sp as usize] = self.pc;
+                self.sp += 1;
                 Jump(nnn)
             }
             (0x3, x, k1, k2) => {
                 let kk = var(k1, k2);
-                trace!("SE Vx({}) K({})", x, kk);
-                if self.v[idx(x)] == kk {
+                trace!("hoge {} {}", idx(x), kk);
+                let vx = self.v[idx(x)];
+                trace!("SE V{}({}) K({})", x, vx, kk);
+                if vx == kk {
                     Skip
                 } else {
                     Next
@@ -232,45 +258,52 @@ impl Cpu {
             }
             (0x8, x, y, 0x4) => {
                 trace!("8xy4 - ADD V{} V{}", x, y);
-                let a = self.v[idx(x)] as u16 + self.v[idx(y)] as u16;
-                if a > 0xff {
-                    self.v[0xF - 1] = 1;
+                let xy = self.v[idx(x)] as u16 + self.v[idx(y)] as u16;
+                if xy > 0xff {
+                    self.v[0xf] = 1;
                 } else {
-                    self.v[0xF - 1] = 0;
+                    self.v[0xf] = 0;
                 }
-                self.v[idx(x)] = (a & 0xFF) as u8;
+                self.v[idx(x)] = (xy & 0xff) as u8;
                 Next
             }
             (0x8, x, y, 0x5) => {
-                trace!("8xy5 - SUB V{} V{}", x, y);
-                if self.v[idx(x)] > self.v[idx(y)] {
-                    self.v[0xF - 1] = 1;
+                let vx = self.v[idx(x)];
+                let vy = self.v[idx(y)];
+                trace!("8xy5 - SUB V{}={} V{}={}", x, vx, y, vy);
+                let (val, overflow) = vx.overflowing_sub(vy);
+                if !overflow {
+                    self.v[0xf] = 1;
                 } else {
-                    self.v[0xF - 1] = 0;
+                    self.v[0xf] = 0;
                 }
-                self.v[idx(x)] = self.v[idx(x)] - self.v[idx(y)];
+                self.v[idx(x)] = val;
                 Next
             }
             (0x8, x, y, 0x6) => {
                 trace!("8xy6 - SHR V{} V{}", x, y);
-                self.v[0xF - 1] = self.v[idx(x)] & 0x1;
+                self.v[0xf] = self.v[idx(x)] & 0x1;
                 self.v[idx(x)] /= 2;
                 Next
             }
             (0x8, x, y, 0x7) => {
-                trace!("8xy7 - SUBN V{} V{}", x, y);
-                if self.v[idx(y)] > self.v[idx(x)] {
-                    self.v[0xF - 1] = 1;
+                let vx = self.v[idx(x)];
+                let vy = self.v[idx(y)];
+                trace!("8xy7 - SUBN V{}={} V{}={}", x, vx, y, vy);
+                let (val, overflow) = vy.overflowing_sub(vx);
+
+                if !overflow {
+                    self.v[0xf] = 1;
                 } else {
-                    self.v[0xF - 1] = 0;
+                    self.v[0xf] = 0;
                 }
-                self.v[idx(x)] = self.v[idx(y)] - self.v[idx(x)];
+                self.v[idx(x)] = val;
                 Next
             }
             (0x8, x, y, 0xE) => {
                 trace!("8xyE - SHL V{} V{}", x, y);
-                self.v[0xF - 1] = self.v[idx(x)] & 128;
-                self.v[idx(x)] *= 2;
+                self.v[0xf] = self.v[idx(x)] >> 7;
+                self.v[idx(x)] = self.v[idx(x)].overflowing_mul(2).0;
                 Next
             }
             (0x9, x, y, 0x0) => {
@@ -313,15 +346,21 @@ impl Cpu {
                     n,
                     bytes
                 );
-                self.v[0xF - 1] = self.draw(io, vx, vy, bytes).unwrap();
+                self.v[0xf] = self.draw(io, vx, vy, bytes).unwrap();
                 Next
             }
             (0xE, x, 0x9, 0xE) => {
-                let cx = char::try_from(self.v[idx(x)] as u32).unwrap();
-                trace!("Ex9E - SKP V{}={} k={}", x, self.v[idx(x)], cx);
+                trace!("Ex9E - SKP V{}={}", x, self.v[idx(x)]);
                 match inp.as_ref() {
                     Some(inp) => {
-                        if let Some(_) = inp.try_iter().find(|c| c.0 == cx) {
+                        if let Some(_) = inp
+                            .try_iter()
+                            .map(|c| {
+                                debug!("Got {:?}", c);
+                                c
+                            })
+                            .find(|c| c.0 == self.v[idx(x)])
+                        {
                             Skip
                         } else {
                             Next
@@ -331,11 +370,17 @@ impl Cpu {
                 }
             }
             (0xE, x, 0xA, 0x1) => {
-                let cx = char::try_from(self.v[idx(x)] as u32).unwrap();
-                trace!("ExA1 - SKNP V{}={} k={}", x, self.v[idx(x)], cx);
+                trace!("ExA1 - SKNP V{}={}", x, self.v[idx(x)]);
                 match inp.as_ref() {
                     Some(inp) => {
-                        if let Some(_) = inp.try_iter().find(|c| c.0 == cx) {
+                        if let Some(_) = inp
+                            .try_iter()
+                            .map(|c| {
+                                debug!("Got {:?}", c);
+                                c
+                            })
+                            .find(|c| c.0 == self.v[idx(x)])
+                        {
                             Next
                         } else {
                             Skip
@@ -355,7 +400,8 @@ impl Cpu {
                 match inp.as_ref() {
                     Some(inp) => {
                         for c in inp.try_iter() {
-                            self.v[idx(x)] = u32::from(c.0) as u8;
+                            debug!("Got {:?}", c);
+                            self.v[idx(x)] = c.0;
                             pressed = true;
                         }
 
@@ -412,7 +458,7 @@ impl Cpu {
                 Next
             }
             _ => {
-                warn!("N/A {:x}{:x}{:x}{:x}", o1, o2, o3, o4);
+                panic!("N/A {:x}{:x}{:x}{:x}", o1, o2, o3, o4);
                 Next
             }
         };
