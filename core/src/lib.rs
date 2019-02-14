@@ -351,42 +351,26 @@ impl Cpu {
             }
             (0xE, x, 0x9, 0xE) => {
                 trace!("Ex9E - SKP V{}={}", x, self.v[idx(x)]);
-                match inp.as_ref() {
-                    Some(inp) => {
-                        if let Some(_) = inp
-                            .try_iter()
-                            .map(|c| {
-                                debug!("Got {:?}", c);
-                                c
-                            })
-                            .find(|c| c.0 == self.v[idx(x)])
-                        {
-                            Skip
-                        } else {
-                            Next
-                        }
+                if let Some(key) = self.key(inp) {
+                    if key.0 == self.v[idx(x)] {
+                        Skip
+                    } else {
+                        Next
                     }
-                    None => Next,
+                } else {
+                    Next
                 }
             }
             (0xE, x, 0xA, 0x1) => {
                 trace!("ExA1 - SKNP V{}={}", x, self.v[idx(x)]);
-                match inp.as_ref() {
-                    Some(inp) => {
-                        if let Some(_) = inp
-                            .try_iter()
-                            .map(|c| {
-                                debug!("Got {:?}", c);
-                                c
-                            })
-                            .find(|c| c.0 == self.v[idx(x)])
-                        {
-                            Next
-                        } else {
-                            Skip
-                        }
+                if let Some(key) = self.key(inp) {
+                    if key.0 == self.v[idx(x)] {
+                        Next
+                    } else {
+                        Skip
                     }
-                    None => Skip,
+                } else {
+                    Skip
                 }
             }
             (0xF, x, 0x0, 0x7) => {
@@ -397,21 +381,16 @@ impl Cpu {
             (0xF, x, 0x0, 0xA) => {
                 trace!("Fx0A - LD Vx, K");
                 let mut pressed = false;
-                match inp.as_ref() {
-                    Some(inp) => {
-                        for c in inp.try_iter() {
-                            debug!("Got {:?}", c);
-                            self.v[idx(x)] = c.0;
-                            pressed = true;
-                        }
+                if let Some(c) = self.key(inp) {
+                    debug!("Got {:?}", c);
+                    self.v[idx(x)] = c.0;
+                    pressed = true;
+                }
 
-                        if pressed {
-                            Next
-                        } else {
-                            Jump(self.pc)
-                        }
-                    }
-                    None => Jump(self.pc),
+                if pressed {
+                    Next
+                } else {
+                    Jump(self.pc)
                 }
             }
             (0xF, x, 0x1, 0x5) => {
@@ -479,6 +458,12 @@ impl Cpu {
         self.dump();
     }
 
+    fn key(&self, inp: &mut Option<mpsc::Receiver<Key>>) -> Option<Key> {
+        match inp.as_ref() {
+            Some(inp) => inp.try_recv().ok(),
+            None => None,
+        }
+    }
     pub fn dump(&self) {
         trace!(
             " v{:?} i={}({:x}) stack={:?} sp={} pc={}({:x}) dt={}",

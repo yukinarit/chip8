@@ -115,7 +115,7 @@ impl Console {
     }
 
     fn peek_keyevent(&self) -> Option<()> {
-        match self.rb.peek_event(Duration::from_millis(1), false) {
+        match self.rb.peek_event(Duration::from_millis(0), false) {
             Ok(rustbox::Event::KeyEvent(key)) => match key {
                 Key::Esc => {
                     std::process::exit(0);
