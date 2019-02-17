@@ -1,6 +1,8 @@
 Chip8 written in Rust
 =====================
 
+![](demo.gif)
+
 Crates
 ------
 
