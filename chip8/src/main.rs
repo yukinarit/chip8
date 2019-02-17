@@ -27,7 +27,7 @@ struct Args {
     rom: PathBuf,
     #[structopt(short = "f", long = "fps", default_value = "60")]
     fps: i32,
-    #[structopt(short = "c", long = "cycle-per-frame", default_value = "10")]
+    #[structopt(short = "c", long = "cycle-per-frame", default_value = "5")]
     cycle_per_frame: i32,
 }
 
@@ -240,7 +240,6 @@ fn run(opts: Args) -> Result<(), ()> {
     chip8.ram.load(file).unwrap();
     chip8.dsp = Some(Box::new(adaptor));
     chip8.inp = Some(irx);
-    //console.run(chip8, itx, opts)
     emuloop(chip8, console, opts)
 }
 

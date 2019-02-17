@@ -47,7 +47,7 @@ pub trait Display {
     fn clear(&self);
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Key(pub u8);
 
 impl std::convert::From<char> for Key {
@@ -88,6 +88,8 @@ pub struct Cpu {
     pub pc: u16,
     /// Dilay timer.
     pub dt: u8,
+    /// Key being entered.
+    key: Option<Key>,
 }
 
 pub enum Res {
@@ -123,6 +125,7 @@ impl Cpu {
             sp: 0,
             pc: 0x200,
             dt: 0,
+            key: None,
         }
     }
 
@@ -197,7 +200,6 @@ impl Cpu {
             }
             (0x3, x, k1, k2) => {
                 let kk = var(k1, k2);
-                trace!("hoge {} {}", idx(x), kk);
                 let vx = self.v[idx(x)];
                 trace!("SE V{}({}) K({})", x, vx, kk);
                 if vx == kk {
@@ -353,6 +355,7 @@ impl Cpu {
                 trace!("Ex9E - SKP V{}={}", x, self.v[idx(x)]);
                 if let Some(key) = self.key(inp) {
                     if key.0 == self.v[idx(x)] {
+                        self.key = None;
                         Skip
                     } else {
                         Next
@@ -365,6 +368,7 @@ impl Cpu {
                 trace!("ExA1 - SKNP V{}={}", x, self.v[idx(x)]);
                 if let Some(key) = self.key(inp) {
                     if key.0 == self.v[idx(x)] {
+                        self.key = None;
                         Next
                     } else {
                         Skip
@@ -458,12 +462,17 @@ impl Cpu {
         self.dump();
     }
 
-    fn key(&self, inp: &mut Option<mpsc::Receiver<Key>>) -> Option<Key> {
+    fn key(&mut self, inp: &mut Option<mpsc::Receiver<Key>>) -> Option<Key> {
         match inp.as_ref() {
-            Some(inp) => inp.try_recv().ok(),
-            None => None,
+            Some(inp) => inp.try_recv().ok().or(self.key).map(|k| {
+                debug!("receiving key {:?}", k);
+                self.key = Some(k);
+                k
+            }),
+            None => self.key,
         }
     }
+
     pub fn dump(&self) {
         trace!(
             " v{:?} i={}({:x}) stack={:?} sp={} pc={}({:x}) dt={}",
