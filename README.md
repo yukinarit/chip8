@@ -26,25 +26,27 @@ Usage
 
 * Run chip8
 	```
-	cargo run -p chip8 <ROM>
+	cd chip8
+	cargo run ./roms/INVADERS
 	```
 
 * See trace log
 	```
-	RUST_LOG=trace cargo run -p chip8 <ROM>
+	RUST_LOG=trace cargo run <ROM>
 	```
 
 * Change FPS(Frame per second)
 	```
-	cargo run -p chip8 <ROM> -f 30
+	cargo run <ROM> -f 30
 	```
 
 * Change FPS and Cycle per frame
 	```
-	cargo run -p chip8 <ROM> -f 30 -c 20
+	cargo run <ROM> -f 30 -c 20
 	```
 
 * Run c8db
 	```
+	cd c8db
 	cargo run -p c8db <ROM>
 	```
