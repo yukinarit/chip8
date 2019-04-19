@@ -37,9 +37,8 @@ fn main() -> Result<(), Error> {
         cpu.cycle(ram, &mut None, &mut rx);
 
         if !line.is_empty() {
-            kb.send(Key(line.chars().next().unwrap())).unwrap();
+            kb.send(Key(line.chars().next().unwrap().to_digit(10).unwrap() as u8))
+                .unwrap();
         }
     }
-
-    Ok(())
 }

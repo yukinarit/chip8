@@ -1,5 +1,4 @@
-#![feature(try_from)]
-use std::convert::{From, TryFrom};
+use std::convert::From;
 use std::io::Read;
 use std::sync::mpsc;
 
@@ -488,6 +487,7 @@ impl Cpu {
     }
 }
 
+/// Chip-8 RAM.
 pub struct Ram {
     /// Chip-8 has 0xFFFF (4096) bytes of RAM.
     buf: [u8; 0xFFF],
