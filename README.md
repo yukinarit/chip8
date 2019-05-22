@@ -1,6 +1,8 @@
 Chip8 written in Rust
 =====================
 
+[![Build Status](https://travis-ci.com/yukinarit/chip8.svg?branch=master)](https://travis-ci.com/yukinarit/chip8)
+
 ![](demo.gif)
 
 Crates
