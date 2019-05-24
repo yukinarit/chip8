@@ -1,6 +1,12 @@
-[workspace]
-members = [
-	"core",
-	"c8db",
-	"chip8",
-]
+[package]
+name = "chip8"
+version = "0.1.0"
+authors = ["Yukinari Tani <yukinarit84@gmail.com>"]
+edition = "2018"
+
+[dependencies]
+core = { path = "core" }
+rustbox = { git = "https://github.com/yukinarit/rustbox.git" }
+log = "*"
+log4rs = "*"
+structopt = "*"

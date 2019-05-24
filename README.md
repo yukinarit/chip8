@@ -1,5 +1,5 @@
-Chip8 emulator written in Rust [![Build Status](https://travis-ci.com/yukinarit/chip8.svg?branch=master)](https://travis-ci.com/yukinarit/chip8)
-==============================
+Chip8 in Rust [![Build Status](https://travis-ci.com/yukinarit/chip8.svg?branch=master)](https://travis-ci.com/yukinarit/chip8)
+=============
 
 ![](demo.gif)
 
@@ -14,38 +14,28 @@ Chip-8 is a small virtual machine designed for gaming in 1980s. Because of its s
 Requirements
 ------------
 
-* Linux / Mac
+* Linux / macOS
 * Rust >= 1.31
 
 Usage
 -----
 
-* Run chip8
-	```
-	$ cd chip8
-	$ cargo run ../roms/INVADERS
-	```
+```
+$ cargo run ./roms/INVADERS
+```
 
-* See trace log
-	```
-	# RUST_LOG=trace cargo run ../roms/INVADERS
-	```
+Keyboard layout
 
-* Change FPS(Frame per second)
-	```
-	$ cargo run <ROM> -f 30
-	```
+|      |      |      |      |
+|------|------|------|------|
+| 1    | 2    | 3    | 4(C) |
+| Q(4) | W(5) | E(6) | R(D) |
+| A(7) | S(8) | D(9) | F(E) |
+| Z(A) | X(0) | C(B) | V(F) |
 
-* Change FPS and Cycle per frame
-	```
-	# cargo run <ROM> -f 30 -c 20
-	```
+* Letters in parenthesis are Chip8 keys
+* ESC is used to stop the program
 
-* Run c8db
-	```
-	$ cd c8db
-	$ cargo run -p c8db <ROM>
-	```
 
 License
 -------
