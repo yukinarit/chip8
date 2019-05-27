@@ -1,6 +1,9 @@
 use std::convert::From;
 use std::io::Read;
-use std::sync::mpsc;
+use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::{mpsc, Arc};
+use std::thread::sleep;
+use std::time::{Duration, Instant};
 
 use log::*;
 use rand::prelude::*;
@@ -85,10 +88,67 @@ pub struct Cpu {
     sp: u16,
     /// Program counter.
     pub pc: u16,
-    /// Dilay timer.
-    pub dt: u8,
+    /// Delay timer.
+    pub dt: DelayTimer,
     /// Key being entered.
     key: Option<Key>,
+}
+
+/// 60Hz Delay timer.
+#[derive(Debug)]
+pub struct DelayTimer {
+    v: Arc<AtomicU8>,
+    th: Option<std::thread::JoinHandle<()>>,
+}
+
+impl std::fmt::Display for DelayTimer {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "{}", self.v.load(Ordering::SeqCst))
+    }
+}
+
+impl DelayTimer {
+    pub fn new() -> DelayTimer {
+        DelayTimer {
+            v: Arc::new(AtomicU8::new(0)),
+            th: None,
+        }
+    }
+
+    pub fn start(&mut self) {
+        let tick = Duration::from_millis((1000 / 60) as u64);
+
+        let v = Arc::clone(&self.v);
+        let th = std::thread::spawn(move || loop {
+            let now = Instant::now();
+
+            // Increment counter.
+            loop {
+                let curr = v.load(Ordering::SeqCst);
+                if curr > 0 {
+                    if curr == v.compare_and_swap(curr, curr - 1, Ordering::SeqCst) {
+                        break;
+                    }
+                } else {
+                    break;
+                }
+            }
+
+            // Adjust to 60Hz.
+            if let Some(remaining) = tick.checked_sub(now.elapsed()) {
+                sleep(remaining);
+            }
+        });
+        self.th = Some(th);
+    }
+
+    pub fn get(&self) -> u8 {
+        self.v.load(Ordering::SeqCst)
+    }
+
+    pub fn set(&mut self, val: u8) {
+        self.v.store(val, Ordering::SeqCst);
+    }
 }
 
 pub enum Res {
@@ -117,13 +177,15 @@ fn idx(x: u8) -> usize {
 
 impl Cpu {
     fn new() -> Self {
+        let mut dt = DelayTimer::new();
+        dt.start();
         Cpu {
             v: [0; 16],
             i: 0,
             stack: [0; 16],
             sp: 0,
             pc: 0x200,
-            dt: 0,
+            dt: dt,
             key: None,
         }
     }
@@ -378,7 +440,7 @@ impl Cpu {
             }
             (0xF, x, 0x0, 0x7) => {
                 trace!("Fx07 - LD Vx, DT");
-                self.v[idx(x)] = self.dt;
+                self.v[idx(x)] = self.dt.get();
                 Next
             }
             (0xF, x, 0x0, 0xA) => {
@@ -398,7 +460,7 @@ impl Cpu {
             }
             (0xF, x, 0x1, 0x5) => {
                 trace!("Fx15 - LD DT, Vx");
-                self.dt = self.v[idx(x)];
+                self.dt.set(self.v[idx(x)]);
                 Next
             }
             (0xF, x, 0x1, 0x8) => {
@@ -454,9 +516,6 @@ impl Cpu {
             Jump(loc) => {
                 self.pc = loc;
             }
-        }
-        if self.dt > 0 {
-            self.dt -= 1;
         }
         self.dump();
     }

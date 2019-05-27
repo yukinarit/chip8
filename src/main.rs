@@ -25,10 +25,8 @@ const HEIGHT: usize = 32;
 #[structopt(name = "chip8", about = "chip8 program options.")]
 struct Args {
     rom: PathBuf,
-    #[structopt(short = "f", long = "fps", default_value = "60")]
+    #[structopt(short = "f", long = "fps", default_value = "300")]
     fps: i32,
-    #[structopt(short = "c", long = "cycle-per-frame", default_value = "5")]
-    cycle_per_frame: i32,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -204,9 +202,7 @@ fn emuloop(mut chip8: Chip8, console: Arc<Mutex<Console>>, opts: Args) -> Result
         let now = Instant::now();
 
         // Run Chip8 Instructions.
-        for _ in 0..opts.cycle_per_frame {
-            chip8.cycle();
-        }
+        chip8.cycle();
 
         match console.lock() {
             Ok(mut c) => {
