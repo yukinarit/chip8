@@ -1,6 +1,7 @@
 use std::convert::From;
 use std::io::Read;
-use std::sync::mpsc;
+use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::{mpsc, Arc};
 
 use log::*;
 use rand::prelude::*;
@@ -85,10 +86,41 @@ pub struct Cpu {
     sp: u16,
     /// Program counter.
     pub pc: u16,
-    /// Dilay timer.
+    /// Delay timer.
     pub dt: u8,
     /// Key being entered.
     key: Option<Key>,
+}
+
+pub struct DelayTimer {
+    v: Arc<AtomicU8>,
+    th: Option<std::thread::JoinHandle<()>>,
+}
+
+impl DelayTimer {
+    pub fn new() -> DelayTimer {
+        DelayTimer {
+            v: Arc::new(AtomicU8::new(0)),
+            th: None,
+        }
+    }
+
+    pub fn start(&mut self) {
+        let v = self.v.clone();
+        let th = std::thread::spawn(move || loop {
+            // Increment counter.
+            loop {
+                let curr = v.load(Ordering::SeqCst);
+                if curr > 0 {
+                    if curr == v.compare_and_swap(curr, curr - 1, Ordering::SeqCst) {
+                        break;
+                    }
+                } else {
+                    break;
+                }
+            }
+        });
+    }
 }
 
 pub enum Res {
