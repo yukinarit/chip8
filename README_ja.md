@@ -4,12 +4,12 @@ Chip8 in Rust [![Build Status](https://travis-ci.com/yukinarit/chip8.svg?branch=
 ![](demo.gif)
 
 
-A simple implementation of Chip-8 emurator in Rust programming language. [README in 日本語.](README_ja.md)
+RustでChip8エミュレータを書いてみる。[README in English.](README.md)
 
-What's Chip8?
--------------
+Chip8とは?
+----------
 
-Chip8 is a small virtual machine designed for gaming in 1970s. Because of its simplicity, there are [implementations](https://github.com/topics/chip8) in many programming languages. I recommend you to try implementing your own chip8!
+Chip8とは1970年代にゲーム用に設計された小さな仮想マシン。仕様は非常にシンプルなので、GithubやWeb上で多くのプログラミング言語での[実装](https://github.com/topics/chip8)を見つけることができる。仕様を見て一から実装するのはそんなに難しくないので、自分の好きな言語で実装してみるといいと思います。
 
 Requirements
 ------------
@@ -33,8 +33,8 @@ Keyboard layout
 | A(7) | S(8) | D(9) | F(E) |
 | Z(A) | X(0) | C(B) | V(F) |
 
-* Letters in parenthesis are Chip8 keys
-* ESC is used to stop the program
+* 括弧内の文字はChip8のキー配列
+* ESCキーでプログラムを終了する
 
 
 License
