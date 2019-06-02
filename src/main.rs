@@ -68,7 +68,7 @@ struct DisplayAdaptor {
 
 impl DisplayAdaptor {
     fn new(console: Arc<Mutex<Console>>) -> DisplayAdaptor {
-        DisplayAdaptor { console: console }
+        DisplayAdaptor { console }
     }
 }
 
@@ -100,8 +100,8 @@ struct Console {
 impl Console {
     fn new(rb: RustBox, keyboard: mpsc::Sender<core::Key>) -> Self {
         let console = Console {
-            rb: rb,
-            keyboard: keyboard,
+            rb,
+            keyboard,
             curr: [[0; HEIGHT]; WIDTH],
         };
         for x in 0..WIDTH {
@@ -207,7 +207,7 @@ fn emuloop(mut chip8: Chip8, console: Arc<Mutex<Console>>, opts: Args) -> Result
         match console.lock() {
             Ok(mut c) => {
                 loop {
-                    if let None = c.peek_keyevent() {
+                    if c.peek_keyevent().is_none() {
                         break;
                     }
                 }

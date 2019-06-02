@@ -185,7 +185,7 @@ impl Cpu {
             stack: [0; 16],
             sp: 0,
             pc: 0x200,
-            dt: dt,
+            dt,
             key: None,
         }
     }
@@ -595,9 +595,5 @@ impl Ram {
             0xF0, 0x80, 0xF0, 0x80, 0x80, // F
         ];
         &self.buf[..fontset.len()].copy_from_slice(&fontset);
-    }
-
-    fn fetch(&self, addr: usize) -> &[u8] {
-        &self.buf[addr..(addr + 2)]
     }
 }
