@@ -21,17 +21,17 @@ impl From<std::io::Error> for Error {
 pub struct Chip8 {
     pub cpu: Cpu,
     pub ram: Ram,
-    pub dsp: Option<Box<Display>>,
-    pub inp: Option<mpsc::Receiver<Key>>,
+    pub dsp: Box<Display>,
+    pub inp: mpsc::Receiver<Key>,
 }
 
 impl Chip8 {
-    pub fn new() -> Self {
+    pub fn new(dsp: Box<Display>, inp: mpsc::Receiver<Key>) -> Self {
         Chip8 {
             cpu: Cpu::new(),
             ram: Ram::new(),
-            dsp: None,
-            inp: None,
+            dsp,
+            inp,
         }
     }
 
@@ -190,40 +190,34 @@ impl Cpu {
         }
     }
 
-    fn draw(&self, io: &mut Option<Box<Display>>, x: u8, y: u8, data: Vec<u8>) -> Result<u8, ()> {
-        if let Some(dsp) = io {
+    fn draw(&self, dsp: &mut Box<Display>, x: u8, y: u8, data: Vec<u8>) -> Result<u8, ()> {
             dsp.draw(x, y, data)
-        } else {
-            Err(())
-        }
     }
 
-    fn clear(&self, io: &mut Option<Box<Display>>) -> Result<(), ()> {
-        if let Some(dsp) = io {
-            dsp.clear();
-        }
+    fn clear(&self, dsp: &mut Box<Display>) -> Result<(), ()> {
+        dsp.clear();
         Ok(())
     }
 
     pub fn run(
         &mut self,
         ram: &mut Ram,
-        io: &mut Option<Box<Display>>,
-        inp: &mut Option<mpsc::Receiver<Key>>,
+        dsp: &mut Box<Display>,
+        inp: &mut mpsc::Receiver<Key>,
     ) {
         loop {
             if self.pc >= 0xFFF || (self.pc + 1) >= 0xFFF {
                 break;
             }
-            self.cycle(ram, io, inp);
+            self.cycle(ram, dsp, inp);
         }
     }
 
     pub fn cycle(
         &mut self,
         ram: &mut Ram,
-        io: &mut Option<Box<Display>>,
-        inp: &mut Option<mpsc::Receiver<Key>>,
+        io: &mut Box<Display>,
+        inp: &mut mpsc::Receiver<Key>,
     ) {
         let pc = self.pc as usize;
         let o1: u8 = ram.buf[pc] >> 4;
@@ -520,15 +514,12 @@ impl Cpu {
         self.dump();
     }
 
-    fn key(&mut self, inp: &mut Option<mpsc::Receiver<Key>>) -> Option<Key> {
-        match inp.as_ref() {
-            Some(inp) => inp.try_recv().ok().or(self.key).map(|k| {
-                debug!("receiving key {:?}", k);
-                self.key = Some(k);
-                k
-            }),
-            None => self.key,
-        }
+    fn key(&mut self, inp: &mut mpsc::Receiver<Key>) -> Option<Key> {
+        inp.try_recv().ok().or(self.key).map(|k| {
+            debug!("receiving key {:?}", k);
+            self.key = Some(k);
+            k
+        })
     }
 
     pub fn dump(&self) {

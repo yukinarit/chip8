@@ -230,12 +230,10 @@ fn run(opts: Args) -> Result<(), ()> {
     let console = Arc::new(Mutex::new(Console::new(rb, itx)));
     let adaptor = DisplayAdaptor::new(console.clone());
 
-    let mut chip8 = Chip8::new();
+    let mut chip8 = Chip8::new(Box::new(adaptor), irx);
     let rom = &opts.rom.canonicalize().unwrap();
     let file = std::fs::File::open(&rom.to_str().unwrap()).unwrap();
     chip8.ram.load(file).unwrap();
-    chip8.dsp = Some(Box::new(adaptor));
-    chip8.inp = Some(irx);
     emuloop(chip8, console, opts)
 }
 
