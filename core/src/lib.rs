@@ -35,15 +35,18 @@ impl Chip8 {
         }
     }
 
+    /// Run chip8 emulator.
     pub fn run(&mut self) {
         self.cpu.run(&mut self.ram, &mut self.dsp, &mut self.inp)
     }
 
-    pub fn cycle(&mut self) {
-        self.cpu.cycle(&mut self.ram, &mut self.dsp, &mut self.inp)
+    /// One tick of CPU.
+    pub fn tick(&mut self) {
+        self.cpu.tick(&mut self.ram, &mut self.dsp, &mut self.inp)
     }
 }
 
+/// Trait to draw information to display device.
 pub trait Display {
     fn draw(&self, x: u8, y: u8, data: Vec<u8>) -> Result<u8, ()>;
     fn clear(&self);
@@ -94,7 +97,7 @@ pub struct Cpu {
     key: Option<Key>,
 }
 
-/// 60Hz Delay timer.
+/// 60Hz Delay timer using thread.
 #[derive(Debug)]
 pub struct DelayTimer {
     v: Arc<AtomicU8>,
@@ -151,9 +154,13 @@ impl DelayTimer {
     }
 }
 
+/// Return value to determine the next `pc`.
 pub enum Res {
+    /// Increase `pc` by 2.
     Next,
+    /// Increase `pc` by 4.
     Skip,
+    /// Set `pc` the value.
     Jump(u16),
 }
 
@@ -190,10 +197,12 @@ impl Cpu {
         }
     }
 
+    /// Send `draw` instruction to display.
     fn draw(&self, dsp: &mut Box<Display>, x: u8, y: u8, data: Vec<u8>) -> Result<u8, ()> {
             dsp.draw(x, y, data)
     }
 
+    /// Send `clear` instruction to display.
     fn clear(&self, dsp: &mut Box<Display>) -> Result<(), ()> {
         dsp.clear();
         Ok(())
@@ -209,11 +218,12 @@ impl Cpu {
             if self.pc >= 0xFFF || (self.pc + 1) >= 0xFFF {
                 break;
             }
-            self.cycle(ram, dsp, inp);
+            self.tick(ram, dsp, inp);
         }
     }
 
-    pub fn cycle(
+    /// One tick of CPU.
+    pub fn tick(
         &mut self,
         ram: &mut Ram,
         io: &mut Box<Display>,
@@ -500,6 +510,8 @@ impl Cpu {
                 Next
             }
         };
+
+        // Determine the next `pc`.
         match res {
             Next => {
                 self.pc += 2;
@@ -541,26 +553,22 @@ impl Cpu {
 pub struct Ram {
     /// Chip-8 has 0xFFFF (4096) bytes of RAM.
     buf: [u8; 0xFFF],
-    /// Byte size of Chip-8 program.
-    pbyte: usize,
 }
 
 impl Ram {
     fn new() -> Self {
         Ram {
             buf: [0; 0xFFF],
-            pbyte: 0,
         }
     }
 
+    /// Load Chip8 ROM into memory.
     pub fn load<S: Read>(&mut self, mut stream: S) -> Result<(), Error> {
         self.load_fontset();
         loop {
-            let size = stream.read(&mut self.buf[0x200..])?;
-            if size == 0 {
+            if stream.read(&mut self.buf[0x200..])? == 0 {
                 break;
             }
-            self.pbyte += size;
         }
 
         Ok(())
