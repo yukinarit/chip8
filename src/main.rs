@@ -30,34 +30,34 @@ struct Args {
 }
 
 #[derive(Debug, Clone, Copy)]
-enum Fill {
+enum Filler {
     Fill,
     Unfill,
 }
 
-impl std::convert::From<Fill> for Color {
-    fn from(f: Fill) -> Color {
+impl std::convert::From<Filler> for Color {
+    fn from(f: Filler) -> Color {
         match f {
-            Fill::Fill => White,
-            Fill::Unfill => Black,
+            Filler::Fill => White,
+            Filler::Unfill => Black,
         }
     }
 }
 
-impl std::convert::From<Fill> for u8 {
-    fn from(f: Fill) -> u8 {
+impl std::convert::From<Filler> for u8 {
+    fn from(f: Filler) -> u8 {
         match f {
-            Fill::Fill => 1,
-            Fill::Unfill => 0,
+            Filler::Fill => 1,
+            Filler::Unfill => 0,
         }
     }
 }
 
-impl std::convert::From<u8> for Fill {
-    fn from(f: u8) -> Fill {
+impl std::convert::From<u8> for Filler {
+    fn from(f: u8) -> Filler {
         match f {
-            1 => Fill::Fill,
-            _ => Fill::Unfill,
+            1 => Filler::Fill,
+            _ => Filler::Unfill,
         }
     }
 }
@@ -106,7 +106,7 @@ impl Console {
         };
         for x in 0..WIDTH {
             for y in 0..HEIGHT {
-                console.draw_pixel(x, y, Fill::Unfill);
+                console.draw_pixel(x, y, Filler::Unfill);
             }
         }
         console
@@ -153,30 +153,20 @@ impl Console {
                     continue;
                 }
                 let cb = self.curr[x + ix][y + iy];
-                match (cb, nb) {
-                    (0, 0) => {}
-                    (0, 1) => {
-                        self.draw_pixel(x + ix, y + iy, Fill::Fill);
-                    }
-                    (1, 0) => {
-                        self.draw_pixel(x + ix, y + iy, Fill::Fill);
-                    }
-                    (1, 1) => {
-                        vf = 1;
-                        self.draw_pixel(x + ix, y + iy, Fill::Unfill);
-                    }
-                    _ => {
-                        panic!("Illegal bit value: cb={}, nb={}", cb, nb);
-                    }
+                let nb = cb ^ nb;
+                // Collision occurred.
+                if cb == 1 && nb == 1 {
+                    vf = 1;
                 }
-                self.curr[x + ix][y + iy] ^= nb;
+                self.draw_pixel(x + ix, y + iy, nb.into());
+                self.curr[x + ix][y + iy] = nb;
             }
         }
 
         Ok(vf)
     }
 
-    fn draw_pixel(&self, x: usize, y: usize, fill: Fill) {
+    fn draw_pixel(&self, x: usize, y: usize, fill: Filler) {
         // debug!("Draw pixel {} {} {:?}", x, y, fill);
         self.rb.print_char(x, y, RB_BOLD, White, fill.into(), PIXEL);
     }
@@ -190,7 +180,7 @@ impl Console {
         for x in 0..WIDTH {
             for y in 0..HEIGHT {
                 self.curr[x][y] = 0;
-                self.draw_pixel(x, y, Fill::Unfill);
+                self.draw_pixel(x, y, Filler::Unfill);
             }
         }
     }
